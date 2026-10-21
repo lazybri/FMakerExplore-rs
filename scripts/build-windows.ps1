@@ -237,7 +237,6 @@ function Build-StaticQt {
         & (Join-Path $source "configure.bat") `
             -static `
             -release `
-            -G Ninja `
             -opensource `
             -confirm-license `
             -nomake examples `
