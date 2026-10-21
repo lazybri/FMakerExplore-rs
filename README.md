@@ -1,6 +1,6 @@
 # Fuji Mitsu maker Explore
 
-FMakerExplore is a filesystem utility for the Fuji and Mitsu MakerCmd interface. It connects to the handset over USB, enters Maker Mode when necessary, and provides access to files and directories on the phone.
+FMakerExplore is a filesystem utility for the Fuji and Mitsu MakerCmd interface. It connects to the handset over USB, enters Maker Mode when necessary, and provides access to files and directories on the phone. The tool is implemented in Rust and talks to the device through [libusb](https://libusb.info/) via [rusb](https://crates.io/crates/rusb).
 
 ## Features
 
@@ -14,44 +14,71 @@ FMakerExplore is a filesystem utility for the Fuji and Mitsu MakerCmd interface.
 
 ## Requirements
 
-- Python 3.10 or newer
-- `pyusb`
-- A working libusb backend
+- Rust 1.85 or newer
+- libusb 1.0 development files
+- USB access to the phone (on Linux, install the usual udev rule or run with appropriate permissions)
+
+Install the libusb development package for your platform, for example:
 
 ```bash
-python3 -m pip install pyusb
+# Debian/Ubuntu
+sudo apt install libusb-1.0-0-dev
+# Fedora
+sudo dnf install libusb1-devel
+# macOS
+brew install libusb
+```
+
+## Build
+
+```bash
+cargo build --release
+```
+
+The binary is written to `target/release/fmaker-explore`. You can also install it into your Cargo bin directory:
+
+```bash
+cargo install --path .
+```
+
+Run the test suite with:
+
+```bash
+cargo test
 ```
 
 ## Usage
 
+The examples below assume `fmaker-explore` is on your `PATH`. From a checkout you can use `cargo run --release --` instead, or invoke the built binary directly.
+
 Connect to the phone and enter Maker Mode:
 
 ```bash
-python3 FMakerExplore.py --connect
+fmaker-explore --connect
 ```
 
 List the available drives:
 
 ```bash
-python3 FMakerExplore.py --listpartition
+fmaker-explore --listpartition
 ```
 
 List a remote directory:
 
 ```bash
-python3 FMakerExplore.py --listdir 'D:\WcdmaMp\'
+fmaker-explore --listdir 'D:\WcdmaMp\'
 ```
 
 Display remote file information:
 
 ```bash
-python3 FMakerExplore.py --listfile 'D:\WcdmaMp\file.bin'
+fmaker-explore --listfile 'D:\WcdmaMp\file.bin'
 ```
 
 Download a file:
 
 ```bash
-python3 FMakerExplore.py --pull 'D:\WcdmaMp\file.bin' ./file.bin
+fmaker-explore --pull 'D:\WcdmaMp\file.bin' ./file.bin
 ```
 
 Use `--overwrite` to replace an existing local file, or `--no-resume` to discard an existing partial download.
@@ -59,7 +86,7 @@ Use `--overwrite` to replace an existing local file, or `--no-resume` to discard
 Upload a file:
 
 ```bash
-python3 FMakerExplore.py --push ./file.bin 'D:\WcdmaMp\file.bin'
+fmaker-explore --push ./file.bin 'D:\WcdmaMp\file.bin'
 ```
 
 The upload command refuses to replace an existing remote file.
@@ -67,29 +94,42 @@ The upload command refuses to replace an existing remote file.
 Create a remote directory:
 
 ```bash
-python3 FMakerExplore.py --mkdir 'D:\WcdmaMp\newdir'
+fmaker-explore --mkdir 'D:\WcdmaMp\newdir'
 ```
 
 Delete a remote file:
 
 ```bash
-python3 FMakerExplore.py --delete 'D:\WcdmaMp\file.bin'
+fmaker-explore --delete 'D:\WcdmaMp\file.bin'
 ```
 
 Enable or disable the read-only attribute:
 
 ```bash
-python3 FMakerExplore.py --setreadonly 'D:\WcdmaMp\file.bin' on
-python3 FMakerExplore.py --setreadonly 'D:\WcdmaMp\file.bin' off
+fmaker-explore --setreadonly 'D:\WcdmaMp\file.bin' on
+fmaker-explore --setreadonly 'D:\WcdmaMp\file.bin' off
 ```
 
 Display the available space on `D:`:
 
 ```bash
-python3 FMakerExplore.py --checkdavailable
+fmaker-explore --checkdavailable
 ```
 
 Use `--help` to display all available options. Remote paths must be absolute, use a drive letter, and contain only ASCII characters.
+
+### Options
+
+| Option | Description |
+| --- | --- |
+| `--vid VID` | USB vendor ID (default `0x06d3`) |
+| `--pid PID` | USB product ID (default `0x21b0`) |
+| `--timeout SECONDS` | USB transfer timeout (default `5`) |
+| `--maker-wait SECONDS` | Time to wait for Maker Mode (default `60`) |
+| `--retries COUNT` | Retry count for interrupted transfers (default `3`) |
+| `--no-resume` | Discard an existing partial download |
+| `--overwrite` | Replace an existing local file |
+| `-v`, `--verbose` | Print protocol details to stderr |
 
 ## Connection Workflow
 
@@ -100,3 +140,10 @@ Use `--help` to display all available options. Remote paths must be absolute, us
 5. The requested filesystem operation is then performed.
 
 The default USB device ID is `06d3:21b0`. Use `--vid` and `--pid` to select another compatible device.
+
+## Project layout
+
+- `src/protocol.rs` — MakerCmd framing, path validation, and shared helpers.
+- `src/client.rs` — USB transport, Maker Mode entry, and filesystem operations.
+- `src/cli.rs` — command-line interface and action dispatch.
+- `src/error.rs` — error types shared across the crate.
