@@ -1,5 +1,12 @@
 # Rust build output
 /target/
+/target-static/
+
+# CMake / IDE build output
+/build/
+/build-*/
+/dist/
+CMakeUserPresets.json
 
 # Rust backup and debug files
 **/*.rs.bk

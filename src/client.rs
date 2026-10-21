@@ -32,6 +32,8 @@ pub struct FileInfo {
     pub timestamp_raw: String,
 }
 
+pub type ProgressHandler = Box<dyn FnMut(u64, Option<u64>) + Send>;
+
 pub struct MakerCmdClient {
     vid: u16,
     pid: u16,
@@ -42,6 +44,7 @@ pub struct MakerCmdClient {
     handle: Option<DeviceHandle<rusb::Context>>,
     claimed_interfaces: Vec<u8>,
     reader: FrameReader,
+    progress: Option<ProgressHandler>,
 }
 
 impl MakerCmdClient {
@@ -63,6 +66,29 @@ impl MakerCmdClient {
             handle: None,
             claimed_interfaces: Vec::new(),
             reader: FrameReader::new(),
+            progress: None,
+        }
+    }
+
+    pub fn set_progress_handler(&mut self, handler: Option<ProgressHandler>) {
+        self.progress = handler;
+    }
+
+    fn report_progress(&mut self, current: u64, total: Option<u64>) {
+        if let Some(handler) = self.progress.as_mut() {
+            handler(current, total);
+            return;
+        }
+        match total {
+            Some(total) => eprint!("\rSent {} / {}", format_size(current), format_size(total)),
+            None => eprint!("\rReceived {}", format_size(current)),
+        }
+        let _ = io::stderr().flush();
+    }
+
+    fn end_progress_line(&self) {
+        if self.progress.is_none() {
+            eprintln!();
         }
     }
 
@@ -690,8 +716,7 @@ impl MakerCmdClient {
             };
 
             verified = Self::merge_resumed_chunk(&mut handle, &data, verified, old_size)?;
-            eprint!("\rReceived {}", format_size(verified));
-            let _ = io::stderr().flush();
+            self.report_progress(verified, None);
             if status == STATUS_LAST {
                 handle.set_len(verified)?;
                 handle.flush()?;
@@ -765,13 +790,13 @@ impl MakerCmdClient {
             };
             match self.pull_once(&remote, &part_path, &mut old_size) {
                 Ok(verified) => {
-                    eprintln!();
+                    self.end_progress_line();
                     replace_file(&part_path, &local_path)?;
                     let _ = fs::remove_file(&meta_path);
                     return Ok(verified);
                 }
                 Err(Error::Transport(message)) => {
-                    eprintln!();
+                    self.end_progress_line();
                     let error = Error::Transport(message);
                     if attempt >= self.retries {
                         last_error = Some(error);
@@ -787,7 +812,7 @@ impl MakerCmdClient {
                     self.reconnect()?;
                 }
                 Err(Error::TransferRestart(message)) => {
-                    eprintln!();
+                    self.end_progress_line();
                     let error = Error::TransferRestart(message);
                     if attempt >= self.retries {
                         last_error = Some(error);
@@ -860,6 +885,9 @@ impl MakerCmdClient {
 
     fn push_once(&mut self, remote: &str, local_path: &Path, size: u64) -> Result<u64, Error> {
         self.begin_push(remote, size)?;
+        if self.progress.is_some() {
+            self.report_progress(0, Some(size));
+        }
         let mut file = File::open(local_path)?;
         let mut sent = 0u64;
         if size == 0 {
@@ -875,8 +903,7 @@ impl MakerCmdClient {
                 let final_chunk = sent + read as u64 == size;
                 self.push_chunk(data, final_chunk)?;
                 sent += read as u64;
-                eprint!("\rSent {} / {}", format_size(sent), format_size(size));
-                let _ = io::stderr().flush();
+                self.report_progress(sent, Some(size));
             }
         }
         Ok(sent)
@@ -919,11 +946,11 @@ impl MakerCmdClient {
         for restart in 0..=self.retries {
             match self.push_once(&remote, &local_path, size) {
                 Ok(sent) => {
-                    eprintln!();
+                    self.end_progress_line();
                     return Ok(sent);
                 }
                 Err(Error::Transport(message)) => {
-                    eprintln!();
+                    self.end_progress_line();
                     let failure = Error::Transport(message);
                     eprintln!(
                         "Upload response was lost; reconnecting to inspect the remote file..."
@@ -1050,6 +1077,12 @@ fn replace_file(from: &Path, to: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn client_is_send_and_sync_safe_to_hand_to_another_thread() {
+        fn assert_send<T: Send>() {}
+        assert_send::<MakerCmdClient>();
+    }
 
     #[test]
     fn sibling_paths_append_suffixes() {
