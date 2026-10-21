@@ -295,6 +295,9 @@ if ($staticMode) {
         $QtPrefix = Join-Path $base "fmakerexplore\qt6-static"
     }
     if (-not $QtWork) {
+        $QtWork = $env:QT_STATIC_WORK
+    }
+    if (-not $QtWork) {
         $base = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { $env:USERPROFILE }
         $QtWork = Join-Path $base "fmakerexplore\qt-static"
     }

@@ -114,8 +114,8 @@ step.
 | macOS | `~/.local/qt6-static-macos` | `~/.cache/fmaker-explore/qt-static-macos` | Cocoa plugin; system frameworks stay dynamic |
 | Windows | `%LOCALAPPDATA%\fmakerexplore\qt6-static` | `%LOCALAPPDATA%\fmakerexplore\qt-static` | MSVC `/MT` + Rust `+crt-static` |
 
-Override the Linux/macOS prefix with `QT_STATIC_PREFIX`, the work directory
-with `QT_STATIC_WORK`, and the Qt version with `QT_STATIC_VERSION`. Static
+Override the prefix with `QT_STATIC_PREFIX`, the work directory with
+`QT_STATIC_WORK`, and the Qt version with `QT_STATIC_VERSION`. Static
 builds use `build-static/` and `target-static/`, and pass:
 
 - `-DFM_STATIC_QT=ON` — link the platform and style plugins from static Qt.
@@ -144,8 +144,8 @@ Static build prerequisites:
   toolchain (`rustup default stable-msvc`). Run the script from a normal
   PowerShell window; it locates and imports `vcvars64.bat` itself.
 
-The CI workflow builds with `--dynamic` / `-Dynamic` to keep jobs fast. Static
-builds are intended for release packaging.
+The CI workflow uses the same static default on all three platforms; see
+[Continuous integration](#continuous-integration).
 
 A manual dynamic build looks like:
 
@@ -261,17 +261,28 @@ The default USB device ID is `06d3:21b0`. The CLI accepts `--vid` and `--pid` to
 ## Platform notes
 
 - **Wayland/Linux**: Qt selects the Wayland platform plugin automatically. The window uses the `fmaker-explore-gui` desktop file name as its application ID.
-- **Windows**: use `windeployqt` when distributing the executable. The CI workflow produces a deployed ZIP.
-- **macOS**: the executable is built as an application bundle; use `macdeployqt` (or the CI artifact) for distribution.
+- **Windows**: the static CI package is self-contained. Dynamic builds need `windeployqt`.
+- **macOS**: the static CI package contains a self-contained `.app`. Dynamic builds need `macdeployqt`.
 - USB access permissions still apply (udev rules or equivalent, depending on the platform).
 
 ## Continuous integration
 
-[`.github/workflows/build.yml`](.github/workflows/build.yml) builds the Rust tests and the GUI on Linux, Windows, and macOS with Qt 6.8, then uploads deployable artifacts:
+[`.github/workflows/build.yml`](.github/workflows/build.yml) runs the Rust tests and builds the GUI as a static package on Linux, Windows, and macOS. The static Qt installation is cached between runs; the first run for a cache key builds Qt 6.12 from source and takes considerably longer.
 
-- Linux: executable tarball (requires a Qt 6 runtime)
-- Windows: `windeployqt` bundle
-- macOS: `macdeployqt` application bundle
+Every run uploads workflow artifacts:
+
+- Linux: `fmaker-explore-gui-linux-x86_64-static.tar.gz`
+- Windows: `fmaker-explore-gui-windows-x86_64-static.zip`
+- macOS: `fmaker-explore-gui-macos-static.zip`
+
+Pushing a tag also publishes these files to a GitHub Release automatically:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Branch pushes and pull requests build and upload workflow artifacts without creating a release.
 
 ## Project layout
 

@@ -2,6 +2,8 @@ name: Build
 
 on:
   push:
+    branches: ['**']
+    tags: ['**']
   pull_request:
   workflow_dispatch:
 
@@ -18,16 +20,13 @@ jobs:
         include:
           - name: linux-x86_64
             os: ubuntu-latest
-            qt_arch: linux_gcc_64
-            artifact: dist/fmaker-explore-gui-linux-x86_64.tar.gz
+            artifact: dist/fmaker-explore-gui-linux-x86_64-static.tar.gz
           - name: windows-x86_64
             os: windows-latest
-            qt_arch: win64_msvc2022_64
-            artifact: dist/fmaker-explore-gui-windows-x86_64.zip
+            artifact: dist/fmaker-explore-gui-windows-x86_64-static.zip
           - name: macos
             os: macos-14
-            qt_arch: clang_64
-            artifact: dist/fmaker-explore-gui-macos.zip
+            artifact: dist/fmaker-explore-gui-macos-static.zip
 
     steps:
       - name: Checkout
@@ -41,18 +40,36 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          version: '6.8.3'
-          arch: ${{ matrix.qt_arch }}
-          cache: true
+          python-version: '3.12'
+
+      - name: Restore static Qt
+        id: qt-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/qt-static
+          key: qt-static-6.12.0-${{ runner.os }}-${{ runner.arch }}-v1
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build libudev-dev pkg-config
+          sudo apt-get install -y \
+            build-essential cmake ninja-build pkg-config python3 perl \
+            libudev-dev libwayland-dev libwayland-bin wayland-protocols \
+            libx11-xcb-dev libxcb1-dev libxcb-cursor-dev libxcb-icccm4-dev \
+            libxcb-image0-dev libxcb-keysyms1-dev libxcb-randr0-dev \
+            libxcb-render-util0-dev libxcb-shape0-dev libxcb-sync-dev \
+            libxcb-xfixes0-dev libxcb-xkb-dev libxcb-xinerama0-dev \
+            libxcb-xinput-dev libxcb-glx0-dev libxcb-util-dev \
+            libxcb-render0-dev libxcb-shm0-dev libxcb-dri3-dev \
+            libxcb-present-dev libxkbcommon-dev \
+            libxkbcommon-x11-dev libfontconfig1-dev libgl1-mesa-dev \
+            libegl1-mesa-dev libopengl-dev libglib2.0-dev libdbus-1-dev \
+            libicu-dev libzstd-dev libdouble-conversion-dev libb2-dev \
+            liburing-dev libsm-dev libice-dev libxext-dev libdrm-dev
 
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
@@ -75,41 +92,57 @@ jobs:
       - name: Run Rust tests
         run: cargo test --locked
 
-      - name: Build (Linux)
+      - name: Build static (Linux)
         if: runner.os == 'Linux'
-        run: ./scripts/build-linux.sh --dynamic --clean --package
+        env:
+          QT_STATIC_PREFIX: ${{ runner.temp }}/qt-static
+          QT_STATIC_WORK: ${{ runner.temp }}/qt-work
+        run: ./scripts/build-linux.sh --static --clean --package
 
-      - name: Build (macOS)
+      - name: Build static (macOS)
         if: runner.os == 'macOS'
-        run: ./scripts/build-macos.sh --dynamic --clean --package
+        env:
+          QT_STATIC_PREFIX: ${{ runner.temp }}/qt-static
+          QT_STATIC_WORK: ${{ runner.temp }}/qt-work
+        run: ./scripts/build-macos.sh --static --clean --package
 
-      - name: Build (Windows)
+      - name: Build static (Windows)
         if: runner.os == 'Windows'
-        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -Dynamic -Configuration Release -Clean -Package
+        env:
+          QT_STATIC_PREFIX: ${{ runner.temp }}/qt-static
+          QT_STATIC_WORK: ${{ runner.temp }}/qt-work
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -Clean -Package
+
+      - name: Save static Qt
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/qt-static
+          key: qt-static-6.12.0-${{ runner.os }}-${{ runner.arch }}-v1
 
       - name: Smoke test (Linux)
         if: runner.os == 'Linux'
-        run: ./build/fmaker-explore-gui --version
+        run: ./build-static/fmaker-explore-gui --version
 
       - name: UI smoke test (Linux)
         if: runner.os == 'Linux'
         env:
           QT_QPA_PLATFORM: offscreen
-        run: ./build/fmaker-explore-gui --smoke-test
+        run: ./build-static/fmaker-explore-gui --smoke-test
 
       - name: C++ unit tests (Linux)
         if: runner.os == 'Linux'
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build-static --output-on-failure
 
       - name: Smoke test (macOS)
         if: runner.os == 'macOS'
-        run: ./build/fmaker-explore-gui.app/Contents/MacOS/fmaker-explore-gui --version
+        run: ./build-static/fmaker-explore-gui.app/Contents/MacOS/fmaker-explore-gui --version
 
       - name: Smoke test (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $exe = Get-ChildItem build -Filter fmaker-explore-gui.exe -Recurse | Select-Object -First 1
+          $exe = Get-ChildItem build-static -Filter fmaker-explore-gui.exe -Recurse | Select-Object -First 1
           & $exe.FullName --version
 
       - name: Upload artifact
@@ -118,3 +151,24 @@ jobs:
           name: fmaker-explore-gui-${{ matrix.name }}
           path: ${{ matrix.artifact }}
           if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
